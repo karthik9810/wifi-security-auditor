@@ -1,0 +1,363 @@
+#!/usr/bin/env python3
+"""
+╔══════════════════════════════════════════════════════════════╗
+║         📡 WiFi SECURITY AUDITOR v1.0                       ║
+║         By: Karthigeyan Ravindranathan (karthik-sec)        ║
+║         GitHub: github.com/karthik9810                      ║
+║         ⚠️  For Educational & Ethical Use Only!             ║
+║         ✅ Only scan networks YOU OWN or have permission!   ║
+╚══════════════════════════════════════════════════════════════╝
+"""
+
+import subprocess
+import platform
+import os
+import sys
+import datetime
+
+# ── ANSI Colors ───────────────────────────────────────────────
+class Color:
+    RED    = '\033[91m'
+    GREEN  = '\033[92m'
+    YELLOW = '\033[93m'
+    BLUE   = '\033[94m'
+    PURPLE = '\033[95m'
+    CYAN   = '\033[96m'
+    WHITE  = '\033[97m'
+    BOLD   = '\033[1m'
+    RESET  = '\033[0m'
+
+def banner():
+    print(f"""
+{Color.PURPLE}{Color.BOLD}
+╔══════════════════════════════════════════════════════════════╗
+║        📡  WiFi SECURITY AUDITOR  v1.0  📡                  ║
+║        ────────────────────────────────────────             ║
+║        🔵 Blue Team  💜 Purple Team  🔴 Red Team            ║
+║        By: Karthigeyan Ravindranathan | karthik-sec         ║
+╚══════════════════════════════════════════════════════════════╝
+{Color.RESET}""")
+
+def disclaimer():
+    print(f"{Color.RED}{Color.BOLD}")
+    print("  ⚠️  DISCLAIMER ⚠️")
+    print("  This tool is for EDUCATIONAL purposes ONLY!")
+    print("  Only scan networks YOU OWN or have permission!")
+    print("  Unauthorized scanning is ILLEGAL!")
+    print(f"{Color.RESET}")
+    confirm = input(f"{Color.YELLOW}  Do you agree to use this ethically? (yes/no): {Color.RESET}").strip().lower()
+    if confirm != 'yes':
+        print(f"{Color.RED}  Exiting... Stay ethical! 👋{Color.RESET}")
+        sys.exit(0)
+    print()
+
+# ── SIGNAL STRENGTH RATING ────────────────────────────────────
+def signal_rating(signal):
+    try:
+        signal = int(signal)
+        if signal >= -50:
+            return Color.GREEN,  "Excellent 📶📶📶📶"
+        elif signal >= -60:
+            return Color.GREEN,  "Good      📶📶📶"
+        elif signal >= -70:
+            return Color.YELLOW, "Fair      📶📶"
+        else:
+            return Color.RED,    "Weak      📶"
+    except:
+        return Color.WHITE, "Unknown"
+
+# ── SECURITY RATING ───────────────────────────────────────────
+def security_rating(auth):
+    auth = auth.upper()
+    if 'WPA3' in auth:
+        return Color.GREEN,  "🟢 VERY SECURE   (WPA3)"
+    elif 'WPA2' in auth:
+        return Color.GREEN,  "🟢 SECURE        (WPA2)"
+    elif 'WPA' in auth:
+        return Color.YELLOW, "🟡 MODERATE      (WPA)"
+    elif 'WEP' in auth:
+        return Color.RED,    "🔴 VULNERABLE!   (WEP - Easily cracked!)"
+    elif 'OPEN' in auth or auth == '' or 'NONE' in auth:
+        return Color.RED,    "🔴 OPEN NETWORK! (No Password - DANGEROUS!)"
+    else:
+        return Color.CYAN,   "🔵 UNKNOWN       (" + auth + ")"
+
+# ── SCAN WiFi — WINDOWS ───────────────────────────────────────
+def scan_windows():
+    networks = []
+    try:
+        result = subprocess.run(
+            ['netsh', 'wlan', 'show', 'networks', 'mode=Bssid'],
+            capture_output=True, text=True, timeout=15
+        )
+        lines = result.stdout.split('\n')
+        current = {}
+        for line in lines:
+            line = line.strip()
+            if line.startswith('SSID') and 'BSSID' not in line:
+                if current:
+                    networks.append(current)
+                    current = {}
+                parts = line.split(':', 1)
+                current['ssid'] = parts[1].strip() if len(parts) > 1 else 'Hidden'
+            elif 'Authentication' in line:
+                parts = line.split(':', 1)
+                current['auth'] = parts[1].strip() if len(parts) > 1 else 'Unknown'
+            elif 'Encryption' in line:
+                parts = line.split(':', 1)
+                current['encryption'] = parts[1].strip() if len(parts) > 1 else 'Unknown'
+            elif 'Signal' in line:
+                parts = line.split(':', 1)
+                current['signal'] = parts[1].strip().replace('%','') if len(parts) > 1 else '0'
+            elif 'BSSID 1' in line:
+                parts = line.split(':', 1)
+                current['bssid'] = parts[1].strip() if len(parts) > 1 else 'Unknown'
+            elif 'Radio type' in line:
+                parts = line.split(':', 1)
+                current['radio'] = parts[1].strip() if len(parts) > 1 else 'Unknown'
+        if current:
+            networks.append(current)
+    except Exception as e:
+        print(f"{Color.RED}Error scanning: {e}{Color.RESET}")
+    return networks
+
+# ── SCAN WiFi — LINUX ─────────────────────────────────────────
+def scan_linux():
+    networks = []
+    try:
+        # Try nmcli first
+        result = subprocess.run(
+            ['nmcli', '-f', 'SSID,BSSID,MODE,CHAN,RATE,SIGNAL,BARS,SECURITY',
+             'device', 'wifi', 'list'],
+            capture_output=True, text=True, timeout=15
+        )
+        lines = result.stdout.strip().split('\n')
+        if len(lines) > 1:
+            for line in lines[1:]:
+                parts = line.split()
+                if len(parts) >= 6:
+                    networks.append({
+                        'ssid':   parts[0] if parts[0] != '--' else 'Hidden',
+                        'signal': parts[5],
+                        'auth':   ' '.join(parts[7:]) if len(parts) > 7 else 'Unknown',
+                        'bssid':  parts[1] if len(parts) > 1 else 'Unknown',
+                        'radio':  'Unknown'
+                    })
+    except FileNotFoundError:
+        try:
+            # Fallback to iwlist
+            iface = 'wlan0'
+            result = subprocess.run(
+                ['sudo', 'iwlist', iface, 'scan'],
+                capture_output=True, text=True, timeout=15
+            )
+            current = {}
+            for line in result.stdout.split('\n'):
+                line = line.strip()
+                if 'ESSID:' in line:
+                    if current: networks.append(current); current = {}
+                    current['ssid'] = line.split('"')[1] if '"' in line else 'Hidden'
+                elif 'Signal level' in line:
+                    parts = line.split('Signal level=')
+                    if len(parts) > 1:
+                        current['signal'] = parts[1].split(' ')[0].replace('dBm','')
+                elif 'Encryption key' in line:
+                    current['auth'] = 'WPA' if 'on' in line.lower() else 'OPEN'
+                elif 'Address:' in line:
+                    current['bssid'] = line.split('Address:')[1].strip()
+            if current: networks.append(current)
+        except Exception as e:
+            print(f"{Color.RED}Error: {e}{Color.RESET}")
+    return networks
+
+# ── GET CURRENT CONNECTED NETWORK ─────────────────────────────
+def get_connected_network():
+    system = platform.system()
+    try:
+        if system == 'Windows':
+            result = subprocess.run(
+                ['netsh', 'wlan', 'show', 'interfaces'],
+                capture_output=True, text=True, timeout=10
+            )
+            for line in result.stdout.split('\n'):
+                if 'SSID' in line and 'BSSID' not in line:
+                    parts = line.split(':', 1)
+                    if len(parts) > 1:
+                        return parts[1].strip()
+        elif system == 'Linux':
+            result = subprocess.run(
+                ['nmcli', '-t', '-f', 'active,ssid', 'dev', 'wifi'],
+                capture_output=True, text=True, timeout=10
+            )
+            for line in result.stdout.split('\n'):
+                if line.startswith('yes:'):
+                    return line.split(':')[1]
+    except:
+        pass
+    return None
+
+# ── DISPLAY NETWORKS ──────────────────────────────────────────
+def display_networks(networks):
+    if not networks:
+        print(f"{Color.RED}  No networks found or permission denied!{Color.RESET}")
+        print(f"{Color.YELLOW}  💡 Try running as Administrator/sudo{Color.RESET}")
+        return
+
+    # Stats
+    total     = len(networks)
+    open_nets = 0
+    wep_nets  = 0
+    secure    = 0
+
+    print(f"\n{Color.PURPLE}{'═'*70}{Color.RESET}")
+    print(f"{Color.BOLD}{Color.CYAN}  📡 NETWORKS FOUND: {total}{Color.RESET}")
+    print(f"{Color.PURPLE}{'═'*70}{Color.RESET}\n")
+
+    for i, net in enumerate(networks, 1):
+        ssid       = net.get('ssid', 'Hidden')
+        auth       = net.get('auth', 'Unknown')
+        signal_raw = net.get('signal', '0')
+        bssid      = net.get('bssid', 'Unknown')
+        radio      = net.get('radio', 'Unknown')
+
+        # Windows signal is %, convert to dBm-like for rating
+        try:
+            sig_val = int(signal_raw)
+            if sig_val > 0 and sig_val <= 100:
+                # Windows percentage
+                sig_dbm = -100 + (sig_val / 2)
+                sig_color, sig_label = signal_rating(sig_dbm)
+                sig_display = f"{signal_raw}%"
+            else:
+                sig_color, sig_label = signal_rating(signal_raw)
+                sig_display = f"{signal_raw} dBm"
+        except:
+            sig_color, sig_label = Color.WHITE, "Unknown"
+            sig_display = signal_raw
+
+        sec_color, sec_label = security_rating(auth)
+
+        # Count for summary
+        auth_upper = auth.upper()
+        if 'OPEN' in auth_upper or auth_upper in ['', 'NONE']:
+            open_nets += 1
+        elif 'WEP' in auth_upper:
+            wep_nets += 1
+        else:
+            secure += 1
+
+        print(f"  {Color.BOLD}{Color.WHITE}[{i:02d}] {Color.CYAN}{ssid}{Color.RESET}")
+        print(f"       {Color.WHITE}BSSID      : {Color.YELLOW}{bssid}")
+        print(f"       {Color.WHITE}Security   : {sec_color}{sec_label}{Color.RESET}")
+        print(f"       {Color.WHITE}Signal     : {sig_color}{sig_display}  {sig_label}{Color.RESET}")
+        if radio != 'Unknown':
+            print(f"       {Color.WHITE}Radio Type : {Color.CYAN}{radio}{Color.RESET}")
+        print()
+
+    # Summary
+    print(f"{Color.PURPLE}{'═'*70}{Color.RESET}")
+    print(f"{Color.BOLD}{Color.CYAN}  📊 SECURITY SUMMARY{Color.RESET}")
+    print(f"{Color.PURPLE}{'═'*70}{Color.RESET}")
+    print(f"  {Color.WHITE}Total Networks  : {Color.CYAN}{total}")
+    print(f"  {Color.GREEN}Secure Networks : {secure}")
+    print(f"  {Color.RED}Open Networks   : {open_nets}  {'⚠️  DANGEROUS!' if open_nets > 0 else '✅'}")
+    print(f"  {Color.RED}WEP Networks    : {wep_nets}  {'⚠️  VULNERABLE!' if wep_nets > 0 else '✅'}{Color.RESET}")
+
+    # Warnings
+    if open_nets > 0:
+        print(f"\n  {Color.RED}⚠️  WARNING: {open_nets} OPEN network(s) detected!")
+        print(f"  Never connect to open networks without a VPN!{Color.RESET}")
+    if wep_nets > 0:
+        print(f"\n  {Color.RED}⚠️  WARNING: {wep_nets} WEP network(s) detected!")
+        print(f"  WEP encryption is outdated and easily cracked!{Color.RESET}")
+    if open_nets == 0 and wep_nets == 0:
+        print(f"\n  {Color.GREEN}✅ All nearby networks use modern encryption!{Color.RESET}")
+
+    print(f"{Color.PURPLE}{'═'*70}{Color.RESET}\n")
+
+# ── SECURITY TIPS ─────────────────────────────────────────────
+def show_tips():
+    tips = [
+        "Use WPA3 or WPA2 encryption on your router",
+        "Never connect to open/public WiFi without a VPN",
+        "Change your router's default password immediately",
+        "Use a strong password (16+ chars) for your WiFi",
+        "Enable MAC address filtering on your router",
+        "Disable WPS (WiFi Protected Setup) on your router",
+        "Regularly update your router's firmware",
+        "Use a separate guest network for visitors",
+    ]
+    print(f"\n{Color.PURPLE}{'═'*70}{Color.RESET}")
+    print(f"{Color.BOLD}{Color.CYAN}  💡 WiFi SECURITY TIPS{Color.RESET}")
+    print(f"{Color.PURPLE}{'═'*70}{Color.RESET}")
+    for i, tip in enumerate(tips, 1):
+        print(f"  {Color.YELLOW}{i:02d}. {Color.WHITE}{tip}{Color.RESET}")
+    print(f"{Color.PURPLE}{'═'*70}{Color.RESET}\n")
+
+# ── SAVE REPORT ───────────────────────────────────────────────
+def save_report(networks):
+    timestamp = datetime.datetime.now().strftime('%Y%m%d_%H%M%S')
+    filename  = f'wifi_audit_report_{timestamp}.txt'
+    with open(filename, 'w') as f:
+        f.write("="*60 + "\n")
+        f.write("  WiFi SECURITY AUDIT REPORT\n")
+        f.write(f"  By: Karthigeyan Ravindranathan (karthik-sec)\n")
+        f.write(f"  Date: {datetime.datetime.now()}\n")
+        f.write("="*60 + "\n\n")
+        for i, net in enumerate(networks, 1):
+            f.write(f"[{i:02d}] SSID     : {net.get('ssid','Unknown')}\n")
+            f.write(f"     BSSID    : {net.get('bssid','Unknown')}\n")
+            f.write(f"     Security : {net.get('auth','Unknown')}\n")
+            f.write(f"     Signal   : {net.get('signal','Unknown')}\n\n")
+    print(f"  {Color.GREEN}✅ Report saved: {filename}{Color.RESET}\n")
+
+# ── MAIN ──────────────────────────────────────────────────────
+def main():
+    banner()
+    disclaimer()
+
+    system = platform.system()
+    print(f"  {Color.CYAN}System: {Color.WHITE}{system}{Color.RESET}")
+
+    # Show connected network
+    connected = get_connected_network()
+    if connected:
+        print(f"  {Color.GREEN}Currently connected to: {Color.BOLD}{connected}{Color.RESET}\n")
+
+    while True:
+        print(f"{Color.CYAN}  Options:{Color.RESET}")
+        print(f"  {Color.WHITE}[1] Scan nearby WiFi networks")
+        print(f"  {Color.WHITE}[2] Show WiFi security tips")
+        print(f"  {Color.WHITE}[3] Exit")
+        print()
+
+        choice = input(f"{Color.PURPLE}  Enter choice (1/2/3): {Color.RESET}").strip()
+
+        if choice == '1':
+            print(f"\n  {Color.CYAN}Scanning nearby networks...{Color.RESET}\n")
+            if system == 'Windows':
+                networks = scan_windows()
+            elif system == 'Linux':
+                networks = scan_linux()
+            else:
+                print(f"  {Color.RED}macOS support coming soon!{Color.RESET}")
+                networks = []
+
+            display_networks(networks)
+
+            if networks:
+                save = input(f"  {Color.YELLOW}Save report to file? (yes/no): {Color.RESET}").strip().lower()
+                if save == 'yes':
+                    save_report(networks)
+
+        elif choice == '2':
+            show_tips()
+
+        elif choice == '3':
+            print(f"\n  {Color.PURPLE}Stay secure buddy! 💜 — karthik-sec{Color.RESET}\n")
+            break
+        else:
+            print(f"  {Color.RED}Invalid choice! Try again.{Color.RESET}\n")
+
+if __name__ == '__main__':
+    main()
